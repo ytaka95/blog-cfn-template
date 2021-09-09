@@ -1,0 +1,6 @@
+{
+  "Parameters": {
+    "LambdaFunctionName": "TestFunctionProd",
+    "LambdaFunctionHandler": "lambda_handler.lambda_handler"
+  }
+}

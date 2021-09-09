@@ -1,0 +1,16 @@
+version: 0.2
+
+phases:
+  build:
+    commands:
+      - |
+        aws cloudformation package \
+          --template-file pipeline_settings/template_deploy.yml \
+          --s3-bucket $S3_BUCKET \
+          --output-template-file $PACKAGED_TEMPLATE_FILE_PATH
+
+artifacts:
+  files:
+    - $PACKAGED_TEMPLATE_FILE_PATH
+    - pipeline_settings/*
+  discard-paths: yes

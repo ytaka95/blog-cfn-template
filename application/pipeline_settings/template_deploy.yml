@@ -1,0 +1,112 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description:  Service Infra Build Pipeline
+
+Parameters:
+  LambdaFunctionName:
+    Type: String
+  LambdaFunctionHandler:
+    Type: String
+
+Resources:
+  LambdaTestFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: test function
+      Environment:
+        Variables:
+          TABLE_ARN: !GetAtt DynamoDBTestTable.Arn
+      FunctionName: !Ref LambdaFunctionName
+      Handler: !Ref LambdaFunctionHandler
+      MemorySize: 256
+      Role: !GetAtt LambdaRole.Arn
+      Runtime: python3.6
+      Timeout: 10
+
+  DynamoDBTestTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+      - AttributeName: name
+        AttributeType: S
+      - AttributeName: key
+        AttributeType: S
+      - AttributeName: date
+        AttributeType: S
+      BillingMode: PAY_PER_REQUEST
+      GlobalSecondaryIndexes:
+        - IndexName: KeyDate
+          KeySchema:
+          - AttributeName: key
+            KeyType: HASH
+          - AttributeName: date
+            KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      KeySchema:
+      - AttributeName: name
+        KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expireAt
+        Enabled: true
+
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "lambda.amazonaws.com"
+            Action: "sts:AssumeRole"
+
+      Policies:
+        - PolicyName: !Sub ${LambdaFunctionName}-DynamoDB
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "dynamodb:GetItem"
+                  - "dynamodb:Query"
+                  - "dynamodb:PutItem"
+                  - "dynamodb:UpdateItem"
+                Resource: !GetAtt DynamoDBTestTable.Arn
+        - PolicyName: !Sub ${LambdaFunctionName}-CloudWatch
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action: "logs:*"
+                Resource: "arn:aws:logs:*:*:*"
+
+  # LambdaRolePolicyDynamoDB:
+  #   Type: "AWS::IAM::Policy"
+  #   Properties:
+  #     PolicyName: !Sub ${LambdaFunctionName}-DynamoDB
+  #     PolicyDocument:
+  #       Version: "2012-10-17"
+  #       Statement:
+  #         - Effect: "Allow"
+  #           Action:
+  #             - "dynamodb:GetItem"
+  #             - "dynamodb:Query"
+  #             - "dynamodb:PutItem"
+  #             - "dynamodb:UpdateItem"
+  #           Resource: !GetAtt DynamoDBTestTable.Arn
+  #     Roles:
+  #       - Ref: "LambdaRole"
+
+  # LambdaRolePolicyCloudWatch:
+  #   Type: "AWS::IAM::Policy"
+  #   Properties:
+  #     PolicyName: !Sub ${LambdaFunctionName}-CloudWatch
+  #     PolicyDocument:
+  #       Version: "2012-10-17"
+  #       Statement:
+  #         - Effect: "Allow"
+  #           Action: "logs:*"
+  #           Resource: "arn:aws:logs:*:*:*"
+  #     Roles:
+  #       - Ref: "LambdaRole"
