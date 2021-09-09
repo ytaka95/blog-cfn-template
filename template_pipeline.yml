@@ -1,0 +1,335 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: CloudFormation Template of Pipeline
+
+Parameters:
+  Owner:
+    Type: String
+  Repo:
+    Type: String
+  OAuthToken:
+    Type: String
+    NoEcho: true
+  ModuleName:
+    Type: String
+  DevModuleStackName:
+    Type: String
+  ProdModuleStackName:
+    Type: String
+  TemplateFilePath:
+    Type: String
+    Default: template_deploy.yml
+  PackagedTemplateFilePath:
+    Type: String
+    Default: packaged.yml
+  DevDeployParamFile:
+    Type: String
+    Default: param_dev.json
+  ProdDeployParamFile:
+    Type: String
+    Default: param_prod.json
+  DevBranch:
+    Type: String
+    Default: dev
+  ProdBranch:
+    Type: String
+    Default: master
+  BuildSpec:
+    Type: String
+    Default: pipeline_settings/buildspec.yml
+
+Resources:
+  ArtifactStoreBucket:
+    Type: AWS::S3::Bucket
+
+  BuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Ref ModuleName
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/ubuntu-base:14.04
+        EnvironmentVariables:
+          - Name: PACKAGED_TEMPLATE_FILE_PATH
+            Value: !Ref PackagedTemplateFilePath
+          - Name: S3_BUCKET
+            Value: !Ref ArtifactStoreBucket
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: !Ref BuildSpec
+
+  PipelineDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action: sts:AssumeRole
+            Principal:
+              Service: cloudformation.amazonaws.com
+      Path: /
+      Policies:
+        - PolicyName: !Sub ${ModuleName}DeployPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:*
+                Resource: !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/*
+              - Effect: Allow
+                Action:
+                  - lambda:*
+                Resource: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:*
+              - Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:GetRole
+                  - iam:PassRole
+                  - iam:DeleteRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:GetRolePolicy
+                Resource: !Sub arn:aws:iam::${AWS::AccountId}:role/*
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  - !Sub arn:aws:s3:::${ArtifactStoreBucket}
+                  - !Sub arn:aws:s3:::${ArtifactStoreBucket}/*
+
+  PipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+      Path: /
+      Policies:
+        - PolicyName: CodePipelineAccess
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Sid: S3GetObject
+                Effect: Allow
+                Action: s3:*
+                Resource:
+                  - !Sub arn:aws:s3:::${ArtifactStoreBucket}
+                  - !Sub arn:aws:s3:::${ArtifactStoreBucket}/*
+              - Sid: S3PutObject
+                Effect: Allow
+                Action: s3:*
+                Resource:
+                  - !Sub arn:aws:s3:::${ArtifactStoreBucket}
+                  - !Sub arn:aws:s3:::${ArtifactStoreBucket}/*
+              - Sid: CodeBuildStartBuild
+                Effect: Allow
+                Action:
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                Resource: !Sub arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/${ModuleName}
+              - Sid: CFnActions
+                Effect: Allow
+                Action:
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DeleteChangeSet
+                Resource:
+                  - !Sub arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${DevModuleStackName}/*
+                  - !Sub arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${ProdModuleStackName}/*
+              - Sid: PassRole
+                Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource: !GetAtt PipelineDeployRole.Arn
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+      Path: /
+      Policies:
+        - PolicyName: CodeBuildAccess
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Sid: CloudWatchLogsAccess
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*
+              - Sid: S3Access
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource:
+                  - !Sub arn:aws:s3:::${ArtifactStoreBucket}
+                  - !Sub arn:aws:s3:::${ArtifactStoreBucket}/*
+              - Sid: CloudFormationAccess
+                Effect: Allow
+                Action: cloudformation:ValidateTemplate
+                Resource: "*"
+
+  PipelineDev:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub dev-pipeline-${ModuleName}
+      RoleArn: !GetAtt PipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactStoreBucket
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: DownloadSource
+              ActionTypeId:
+                Category: Source
+                Owner: ThirdParty
+                Version: 1
+                Provider: GitHub
+              Configuration:
+                Owner: !Ref Owner
+                Repo: !Ref Repo
+                Branch: !Ref DevBranch
+                OAuthToken: !Ref OAuthToken
+              OutputArtifacts:
+                - Name: SourceOutput
+        - Name: Build
+          Actions:
+            - InputArtifacts:
+                - Name: SourceOutput
+              Name: Package
+              ActionTypeId:
+                Category: Build
+                Provider: CodeBuild
+                Owner: AWS
+                Version: 1
+              OutputArtifacts:
+                - Name: BuildOutput
+              Configuration:
+                ProjectName: !Ref BuildProject
+
+        - Name: Deploy
+          Actions:
+            - Name: CreateChangeSet
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: '1'
+              InputArtifacts:
+                - Name: BuildOutput
+              Configuration:
+                ActionMode: CHANGE_SET_REPLACE
+                RoleArn: !GetAtt PipelineDeployRole.Arn
+                StackName: !Ref DevModuleStackName
+                ChangeSetName: !Sub ${DevModuleStackName}-changeset
+                Capabilities: CAPABILITY_NAMED_IAM
+                TemplatePath: !Sub BuildOutput::${PackagedTemplateFilePath}
+                TemplateConfiguration: !Sub BuildOutput::${DevDeployParamFile}
+              RunOrder: '1'
+            - Name: ExecuteChangeSet
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: '1'
+              InputArtifacts:
+                - Name: BuildOutput
+              Configuration:
+                ActionMode: CHANGE_SET_EXECUTE
+                ChangeSetName: !Sub ${DevModuleStackName}-changeset
+                StackName: !Ref DevModuleStackName
+              RunOrder: '2'
+
+  PipelineProd:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub prod-pipeline-${ModuleName}
+      RoleArn: !GetAtt PipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactStoreBucket
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: DownloadSource
+              ActionTypeId:
+                Category: Source
+                Owner: ThirdParty
+                Version: 1
+                Provider: GitHub
+              Configuration:
+                Owner: !Ref Owner
+                Repo: !Ref Repo
+                Branch: !Ref ProdBranch
+                OAuthToken: !Ref OAuthToken
+              OutputArtifacts:
+                - Name: SourceOutput
+        - Name: Build
+          Actions:
+            - InputArtifacts:
+                - Name: SourceOutput
+              Name: Package
+              ActionTypeId:
+                Category: Build
+                Provider: CodeBuild
+                Owner: AWS
+                Version: 1
+              OutputArtifacts:
+                - Name: BuildOutput
+              Configuration:
+                ProjectName: !Ref BuildProject
+
+        - Name: Deploy
+          Actions:
+            - Name: CreateChangeSet
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: '1'
+              InputArtifacts:
+                - Name: BuildOutput
+              Configuration:
+                ActionMode: CHANGE_SET_REPLACE
+                RoleArn: !GetAtt PipelineDeployRole.Arn
+                StackName: !Ref ProdModuleStackName
+                ChangeSetName: !Sub ${ProdModuleStackName}-changeset
+                Capabilities: CAPABILITY_NAMED_IAM
+                TemplatePath: !Sub BuildOutput::${PackagedTemplateFilePath}
+                TemplateConfiguration: !Sub BuildOutput::${ProdDeployParamFile}
+              RunOrder: '1'
+            - Name: ExecuteChangeSet
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: '1'
+              InputArtifacts:
+                - Name: BuildOutput
+              Configuration:
+                ActionMode: CHANGE_SET_EXECUTE
+                ChangeSetName: !Sub ${ProdModuleStackName}-changeset
+                StackName: !Ref ProdModuleStackName
+              RunOrder: '2'
