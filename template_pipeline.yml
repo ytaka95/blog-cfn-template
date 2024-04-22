@@ -9,30 +9,18 @@ Parameters:
   OAuthToken:
     Type: String
     NoEcho: true
+  Branch:
+    Type: String
   ModuleName:
     Type: String
-  DevModuleStackName:
+  ModuleStackName:
     Type: String
-  ProdModuleStackName:
-    Type: String
-  TemplateFilePath:
-    Type: String
-    Default: template_deploy.yml
   PackagedTemplateFilePath:
     Type: String
     Default: packaged.yml
-  DevDeployParamFile:
+  DeployParamFile:
     Type: String
-    Default: param_dev.json
-  ProdDeployParamFile:
-    Type: String
-    Default: param_prod.json
-  DevBranch:
-    Type: String
-    Default: dev
-  ProdBranch:
-    Type: String
-    Default: master
+    Default: param.json
   BuildSpec:
     Type: String
     Default: pipeline_settings/buildspec.yml
@@ -144,8 +132,7 @@ Resources:
                   - cloudformation:ExecuteChangeSet
                   - cloudformation:DeleteChangeSet
                 Resource:
-                  - !Sub arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${DevModuleStackName}/*
-                  - !Sub arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${ProdModuleStackName}/*
+                  - !Sub arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${ModuleStackName}/*
               - Sid: PassRole
                 Effect: Allow
                 Action:
@@ -190,10 +177,10 @@ Resources:
                 Action: cloudformation:ValidateTemplate
                 Resource: "*"
 
-  PipelineDev:
+  Pipeline:
     Type: AWS::CodePipeline::Pipeline
     Properties:
-      Name: !Sub dev-pipeline-${ModuleName}
+      Name: !Sub pipeline-${ModuleName}
       RoleArn: !GetAtt PipelineRole.Arn
       ArtifactStore:
         Type: S3
@@ -210,7 +197,7 @@ Resources:
               Configuration:
                 Owner: !Ref Owner
                 Repo: !Ref Repo
-                Branch: !Ref DevBranch
+                Branch: !Ref Branch
                 OAuthToken: !Ref OAuthToken
               OutputArtifacts:
                 - Name: SourceOutput
@@ -242,11 +229,11 @@ Resources:
               Configuration:
                 ActionMode: CHANGE_SET_REPLACE
                 RoleArn: !GetAtt PipelineDeployRole.Arn
-                StackName: !Ref DevModuleStackName
-                ChangeSetName: !Sub ${DevModuleStackName}-changeset
+                StackName: !Ref ModuleStackName
+                ChangeSetName: !Sub ${ModuleStackName}-changeset
                 Capabilities: CAPABILITY_NAMED_IAM
                 TemplatePath: !Sub BuildOutput::${PackagedTemplateFilePath}
-                TemplateConfiguration: !Sub BuildOutput::${DevDeployParamFile}
+                TemplateConfiguration: !Sub BuildOutput::${DeployParamFile}
               RunOrder: '1'
             - Name: ExecuteChangeSet
               ActionTypeId:
@@ -258,78 +245,6 @@ Resources:
                 - Name: BuildOutput
               Configuration:
                 ActionMode: CHANGE_SET_EXECUTE
-                ChangeSetName: !Sub ${DevModuleStackName}-changeset
-                StackName: !Ref DevModuleStackName
-              RunOrder: '2'
-
-  PipelineProd:
-    Type: AWS::CodePipeline::Pipeline
-    Properties:
-      Name: !Sub prod-pipeline-${ModuleName}
-      RoleArn: !GetAtt PipelineRole.Arn
-      ArtifactStore:
-        Type: S3
-        Location: !Ref ArtifactStoreBucket
-      Stages:
-        - Name: Source
-          Actions:
-            - Name: DownloadSource
-              ActionTypeId:
-                Category: Source
-                Owner: ThirdParty
-                Version: 1
-                Provider: GitHub
-              Configuration:
-                Owner: !Ref Owner
-                Repo: !Ref Repo
-                Branch: !Ref ProdBranch
-                OAuthToken: !Ref OAuthToken
-              OutputArtifacts:
-                - Name: SourceOutput
-        - Name: Build
-          Actions:
-            - InputArtifacts:
-                - Name: SourceOutput
-              Name: Package
-              ActionTypeId:
-                Category: Build
-                Provider: CodeBuild
-                Owner: AWS
-                Version: 1
-              OutputArtifacts:
-                - Name: BuildOutput
-              Configuration:
-                ProjectName: !Ref BuildProject
-
-        - Name: Deploy
-          Actions:
-            - Name: CreateChangeSet
-              ActionTypeId:
-                Category: Deploy
-                Owner: AWS
-                Provider: CloudFormation
-                Version: '1'
-              InputArtifacts:
-                - Name: BuildOutput
-              Configuration:
-                ActionMode: CHANGE_SET_REPLACE
-                RoleArn: !GetAtt PipelineDeployRole.Arn
-                StackName: !Ref ProdModuleStackName
-                ChangeSetName: !Sub ${ProdModuleStackName}-changeset
-                Capabilities: CAPABILITY_NAMED_IAM
-                TemplatePath: !Sub BuildOutput::${PackagedTemplateFilePath}
-                TemplateConfiguration: !Sub BuildOutput::${ProdDeployParamFile}
-              RunOrder: '1'
-            - Name: ExecuteChangeSet
-              ActionTypeId:
-                Category: Deploy
-                Owner: AWS
-                Provider: CloudFormation
-                Version: '1'
-              InputArtifacts:
-                - Name: BuildOutput
-              Configuration:
-                ActionMode: CHANGE_SET_EXECUTE
-                ChangeSetName: !Sub ${ProdModuleStackName}-changeset
-                StackName: !Ref ProdModuleStackName
+                ChangeSetName: !Sub ${ModuleStackName}-changeset
+                StackName: !Ref ModuleStackName
               RunOrder: '2'
